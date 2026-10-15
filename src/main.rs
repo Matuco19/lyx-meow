@@ -1,6 +1,4 @@
-use std::io::{BufRead, Write};
-
-use lyx_meow::{App, Args, Command, runner::compile_path, theme};
+use lyx_meow::{App, Args, Command, runner::compile_path, theme, tui};
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
@@ -23,24 +21,10 @@ fn main() -> color_eyre::Result<()> {
         return run_once(&args);
     }
 
-    // interactive green TUI loop
+    // interactive ratatui loop, green on green
     let mut app = App::new(args.file.clone(), args.std.clone());
-    app.run_once();
-    app.draw();
-    let stdin = std::io::stdin();
-    print!("lyx> ");
-    let _ = std::io::stdout().flush();
-    for line in stdin.lock().lines() {
-        let line = line.unwrap_or_default();
-        if !app.handle_line(&line) {
-            break;
-        }
-        app.draw();
-        print!("lyx> ");
-        let _ = std::io::stdout().flush();
-    }
-    println!("{}", theme::dither_bar(40, 1));
-    println!("{} bye", theme::logo());
+    tui::run_tui(&mut app)?;
+    println!("purrr… nap time. bye! (=^\u{FF65}\u{03C9}\u{FF65}^=)");
     Ok(())
 }
 
@@ -62,8 +46,8 @@ fn run_once(args: &Args) -> color_eyre::Result<()> {
     let report = compile_path(&path, args.std.clone());
     if report.ok {
         println!(
-            "{} {} in {}ms",
-            theme::bright("✓ OK"),
+            "{} {} in {}ms of kneading",
+            theme::bright("✓ purrfect"),
             path.display(),
             report.ms
         );
@@ -71,14 +55,14 @@ fn run_once(args: &Args) -> color_eyre::Result<()> {
             println!("{}", report.ir_text);
         }
     } else {
-        eprintln!("{} {}", theme::green("✗ FAIL"), path.display());
+        eprintln!("{} {}", theme::green("✗ hiss…"), path.display());
         eprintln!("{}", report.error);
     }
     Ok(())
 }
 
 fn print_help() {
-    println!("{} — green slynx runner", theme::logo());
+    println!("{} — pounce on slynx files", theme::logo());
     println!("{}", Args::usage());
-    println!("keys: r run · i toggle ir · t tokens · open <path> · q quit");
+    println!("keys: r pounce · i knead IR · t sniff tokens · o new sunbeam · q nap");
 }

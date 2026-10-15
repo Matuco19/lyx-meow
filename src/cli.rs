@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-///TUI runner for slynx sources with green pixelblock chrome.
+///TUI runner for slynx sources, green with a small pixel accent.
 #[derive(Debug, Clone)]
 pub struct Args {
     pub command: Command,

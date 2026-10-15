@@ -73,9 +73,9 @@ pub fn preview_source(path: &Path, limit: usize) -> String {
             if s.len() <= limit {
                 s
             } else {
-                format!("{}\n… [truncated]", &s[..limit])
+                format!("{}\n… tail truncated, showing the tip", &s[..limit])
             }
         }
-        Err(e) => format!("<unreadable: {e}>"),
+        Err(e) => format!("<hiss! unreadable sunbeam: {e}>"),
     }
 }

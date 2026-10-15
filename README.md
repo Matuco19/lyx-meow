@@ -1,8 +1,8 @@
 # lyx-meow
 
-> Green TUI runner for [slynx](https://github.com/Slynx-Language/slynx).
+> Green ratatui runner for [slynx](https://github.com/Slynx-Language/slynx). Pounce on `.syx` files, knead the IR, nap when done. `(=^･ω･^=)`
 
-Minimal, dependency-light (`slynx` + `color-eyre` + `thiserror`), std-only ANSI UI with green dither pixelblock chrome (`░▒▓█`).
+Pixelblocks are kept to two small accents only (header logo + footer paws). Panes use clean green ratatui borders.
 
 ## Install
 
@@ -13,27 +13,27 @@ cargo build
 ## Use
 
 ```bash
-# interactive TUI (run once on open, then r/i/t/q)
+# interactive ratatui TUI (pounces once on open)
 cargo run -- examples/hello.syx
 
 # one-shot for scripts / CI
 cargo run -- run examples/hello.syx --no-tui
 
-# tokens only
+# tokens only (sniffing)
 cargo run -- tokens examples/hello.syx --no-tui
 
 # custom std path
 cargo run -- run examples/hello.syx --std=../slynx-fork/lib/std --no-tui
 ```
 
-Keys: `r` run · `i` toggle IR · `t` tokens · `open <path>` · `q` quit.
+Keys: `r` pounce (run) · `i` knead IR on/off · `t` sniff tokens · `o` new sunbeam (type a path) · `↑↓/jk` scroll · `q` nap (quit).
 
 ## Layout
 
 - `src/cli.rs` — arg parsing, no deps
 - `src/runner.rs` — compile wrapper + timing
-- `src/theme.rs` — green ANSI + pixelblocks
-- `src/tui.rs` — pure-string frame renderer
+- `src/theme.rs` — green styles + tiny pixel accent
+- `src/tui.rs` — ratatui event loop + panes
 - `src/app.rs` — small state machine
 
 ## Validate
