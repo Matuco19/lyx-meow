@@ -1,0 +1,9 @@
+[package]
+name = "lyx-meow"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+slynx = { path = "../slynx-fork" }
+color-eyre = "0.6.5"
+thiserror = "2.0.20"

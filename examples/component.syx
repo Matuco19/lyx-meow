@@ -1,0 +1,9 @@
+component Header {
+    Div {
+        Text {text: "meow from lyx"}
+    }
+}
+
+func main(): Component {
+    Header {}
+}
