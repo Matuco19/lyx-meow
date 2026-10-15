@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 use std::path::PathBuf;
 
 ///Shortcut name exposed on the shell after registering.

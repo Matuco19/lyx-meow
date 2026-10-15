@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 use std::path::PathBuf;
 
 use crate::runner::{RunReport, compile_path, preview_source};

@@ -1,0 +1,50 @@
+# lyx-meow fuzz config — every knob the hairball hunt listens to.
+# run with: lyx-meow fuzz [--config=PATH] [--cases=N] [--seed=N] [--out=DIR]
+
+[run]
+cases = 500          # total cases to pounce on
+seed = 1337          # deterministic stream, same seed = same hunt
+timeout_ms = 2000    # per-case budget, overruns become hang cards
+slow_ms = 500        # cases slower than this are counted as slow
+out_dir = "fuzz-out" # cards land in <out_dir>/cards
+minimize = true      # shrink panic reproducers line by line
+minimize_rounds = 24 # max shrink attempts per panic card
+max_cards = 200      # stop saving new cards past this (counts continue)
+record_slow = false  # also file a card for slow (non-hang) cases
+std_path = ""        # slynx std dir, empty inherits STD_PATH or ~/.slynx/std
+
+[stages]             # pipeline stages to run in order, first panic wins
+lex = true           # lexer tokenization
+load = true          # parsing + module loading
+hir = true           # HIR + typecheck + ownership + monomorphize
+ir = true            # codegen lowering to SlynxIR
+
+[gen]                # grammar generator, valid-ish programs reaching deep stages
+funcs = 4            # helper funcs per generated program
+stmts_per_func = 10  # statements per func body
+max_depth = 3        # expression nesting depth
+components = true    # emit component decls
+generics = true      # emit generic funcs with explicit type args
+enums = true         # emit enum decls + matches
+strings = true       # emit string literals with escapes
+unicode = true       # emit non-ascii idents and strings
+edge_weight = 30     # 0-100 chance per case to blend curated edge snippets
+
+[mutate]             # seed mutation, chaos on real programs
+enabled = true
+weight = 50          # 0-100 chance per case to mutate a corpus seed
+max_ops = 3          # mutation ops stacked per case
+byte_flips = true    # random byte swaps
+truncate = true      # chop the tail mid-token
+duplicate = true     # repeat a random span
+swap_lines = true    # shuffle two lines
+inject_edge = true   # splice a curated edge snippet inside
+
+[corpus]             # seed programs, files or dirs with .syx/.slx/.slynx
+seeds = ["examples"]
+max_seed_bytes = 8000
+max_seeds = 64
+
+[report]
+save_inputs = true   # write .syx reproducers next to cards
+print_ok_every = 100 # progress pawprint cadence, 0 disables

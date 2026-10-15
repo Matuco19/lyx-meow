@@ -1,4 +1,5 @@
-use lyx_meow::{App, Args, Command, register, runner::compile_path, theme, tui};
+// SPDX-License-Identifier: GPL-3.0-only
+use lyx_meow::{App, Args, Command, fuzz, register, runner::compile_path, theme, tui};
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
@@ -15,6 +16,7 @@ fn main() -> color_eyre::Result<()> {
         }
         Command::Register => return register_mlyx(),
         Command::Unregister => return unregister_mlyx(),
+        Command::Fuzz => return fuzz::run(&args),
         _ => {}
     }
 
@@ -101,6 +103,7 @@ fn print_help() {
     println!("{} — pounce on slynx files", theme::logo());
     println!("{}", Args::usage());
     println!("one-shot by default · --tui/-t opens the ratatui playground");
+    println!("fuzz: lyx-meow fuzz --init (starter config) · lyx-meow fuzz [--cases=N]");
     println!("keys: r pounce · i knead IR · t sniff tokens · o new sunbeam · q nap");
     println!("register: lyx-meow --register (mlyx shortcut) · lyx-meow --unregister");
 }

@@ -1,5 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-only
 pub mod app;
 pub mod cli;
+pub mod fuzz;
+pub mod fuzz_config;
+pub mod fuzz_gen;
 pub mod register;
 pub mod runner;
 pub mod theme;

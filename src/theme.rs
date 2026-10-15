@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 use ratatui::style::{Color, Modifier, Style};
 
 ///Green ANSI theme for plain output. Pixelblocks live only in the

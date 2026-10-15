@@ -13,3 +13,7 @@ check:
 #Run the hello example one-shot (no TUI by default).
 run:
 	cargo run -- run examples/hello.syx
+
+#Hunt hairballs in the slynx pipeline with the default config.
+fuzz:
+	cargo run -- fuzz --cases=200

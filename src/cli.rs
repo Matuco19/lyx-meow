@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 use std::path::PathBuf;
 
 ///One-shot runner for slynx sources by default, green with a small pixel accent.
@@ -8,6 +9,11 @@ pub struct Args {
     pub std: Option<PathBuf>,
     pub tui: bool,
     pub emit_ir: bool,
+    pub fuzz_config: Option<PathBuf>,
+    pub fuzz_cases: Option<u64>,
+    pub fuzz_seed: Option<u64>,
+    pub fuzz_out: Option<PathBuf>,
+    pub fuzz_init: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +21,7 @@ pub enum Command {
     Run,
     Check,
     Tokens,
+    Fuzz,
     Register,
     Unregister,
     Help,
@@ -32,20 +39,39 @@ impl Args {
             std: None,
             tui: false,
             emit_ir: true,
+            fuzz_config: None,
+            fuzz_cases: None,
+            fuzz_seed: None,
+            fuzz_out: None,
+            fuzz_init: false,
         };
         for arg in raw {
             match arg.as_str() {
                 "run" => out.command = Command::Run,
                 "check" => out.command = Command::Check,
                 "tokens" => out.command = Command::Tokens,
+                "fuzz" => out.command = Command::Fuzz,
                 "register" | "--register" => out.command = Command::Register,
                 "unregister" | "--unregister" => out.command = Command::Unregister,
                 "help" | "--help" | "-h" => out.command = Command::Help,
                 "version" | "--version" | "-V" => out.command = Command::Version,
                 "--tui" | "-t" => out.tui = true,
                 "--no-ir" => out.emit_ir = false,
+                "--init" => out.fuzz_init = true,
                 s if s.starts_with("--std=") => {
                     out.std = Some(PathBuf::from(&s[6..]));
+                }
+                s if s.starts_with("--config=") => {
+                    out.fuzz_config = Some(PathBuf::from(&s[9..]));
+                }
+                s if s.starts_with("--cases=") => {
+                    out.fuzz_cases = s[8..].parse().ok();
+                }
+                s if s.starts_with("--seed=") => {
+                    out.fuzz_seed = s[7..].parse().ok();
+                }
+                s if s.starts_with("--out=") => {
+                    out.fuzz_out = Some(PathBuf::from(&s[6..]));
                 }
                 s if s.starts_with('-') => {
                     // ignore unknown flags to stay forgiving
@@ -61,7 +87,7 @@ impl Args {
     }
 
     pub fn usage() -> &'static str {
-        "usage: lyx-meow [run|check|tokens] <file.syx> [--std=PATH] [--tui|-t] [--no-ir]\n       lyx-meow [register|unregister]"
+        "usage: lyx-meow [run|check|tokens] <file.syx> [--std=PATH] [--tui|-t] [--no-ir]\n       lyx-meow fuzz [--config=PATH] [--cases=N] [--seed=N] [--out=DIR] [--init]\n       lyx-meow [register|unregister]"
     }
 }
 
@@ -112,5 +138,29 @@ mod tests {
         assert!(matches!(args.command, Command::Register));
         let args = Args::parse(["lyx-meow", "unregister"].iter().map(|s| s.to_string()));
         assert!(matches!(args.command, Command::Unregister));
+    }
+
+    #[test]
+    fn parses_fuzz_overrides() {
+        let args = Args::parse(
+            [
+                "lyx-meow",
+                "fuzz",
+                "--cases=9",
+                "--seed=3",
+                "--out=out",
+                "--init",
+            ]
+            .iter()
+            .map(|s| s.to_string()),
+        );
+        assert!(matches!(args.command, Command::Fuzz));
+        assert_eq!(args.fuzz_cases, Some(9));
+        assert_eq!(args.fuzz_seed, Some(3));
+        assert!(args.fuzz_init);
+        assert_eq!(
+            args.fuzz_out.expect("out should parse").to_string_lossy(),
+            "out"
+        );
     }
 }
