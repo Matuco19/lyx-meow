@@ -38,7 +38,7 @@ impl Args {
                 "tokens" => out.command = Command::Tokens,
                 "help" | "--help" | "-h" => out.command = Command::Help,
                 "version" | "--version" | "-V" => out.command = Command::Version,
-                "--no-tui" => out.no_tui = true,
+                "--no-tui" | "-n" => out.no_tui = true,
                 "--no-ir" => out.emit_ir = false,
                 s if s.starts_with("--std=") => {
                     out.std = Some(PathBuf::from(&s[6..]));

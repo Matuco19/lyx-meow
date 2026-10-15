@@ -1,8 +1,6 @@
 # lyx-meow
 
-> Green ratatui runner for [slynx](https://github.com/Slynx-Language/slynx). Pounce on `.syx` files, knead the IR, nap when done. `(=^･ω･^=)`
-
-Pixelblocks are kept to two small accents only (header logo + footer paws). Panes use clean green ratatui borders.
+> TUI runner for [slynx](https://github.com/Slynx-Language/slynx). Pounce on `.syx` files, knead the IR, nap when done. `(=^･ω･^=)`
 
 ## Install
 
@@ -18,6 +16,9 @@ cargo run -- examples/hello.syx
 
 # one-shot for scripts / CI
 cargo run -- run examples/hello.syx --no-tui
+
+# one-shot for scripts / CI
+cargo run -- run examples/hello.syx -n
 
 # tokens only (sniffing)
 cargo run -- tokens examples/hello.syx --no-tui
