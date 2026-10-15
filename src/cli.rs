@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-///TUI runner for slynx sources, green with a small pixel accent.
+///One-shot runner for slynx sources by default, green with a small pixel accent.
 #[derive(Debug, Clone)]
 pub struct Args {
     pub command: Command,
     pub file: Option<PathBuf>,
     pub std: Option<PathBuf>,
-    pub no_tui: bool,
+    pub tui: bool,
     pub emit_ir: bool,
 }
 
@@ -15,6 +15,8 @@ pub enum Command {
     Run,
     Check,
     Tokens,
+    Register,
+    Unregister,
     Help,
     Version,
 }
@@ -28,7 +30,7 @@ impl Args {
             command: Command::Run,
             file: None,
             std: None,
-            no_tui: false,
+            tui: false,
             emit_ir: true,
         };
         for arg in raw {
@@ -36,9 +38,11 @@ impl Args {
                 "run" => out.command = Command::Run,
                 "check" => out.command = Command::Check,
                 "tokens" => out.command = Command::Tokens,
+                "register" | "--register" => out.command = Command::Register,
+                "unregister" | "--unregister" => out.command = Command::Unregister,
                 "help" | "--help" | "-h" => out.command = Command::Help,
                 "version" | "--version" | "-V" => out.command = Command::Version,
-                "--no-tui" | "-n" => out.no_tui = true,
+                "--tui" | "-t" => out.tui = true,
                 "--no-ir" => out.emit_ir = false,
                 s if s.starts_with("--std=") => {
                     out.std = Some(PathBuf::from(&s[6..]));
@@ -57,7 +61,7 @@ impl Args {
     }
 
     pub fn usage() -> &'static str {
-        "usage: lyx-meow [run|check|tokens] <file.syx> [--std=PATH] [--no-tui] [--no-ir]"
+        "usage: lyx-meow [run|check|tokens] <file.syx> [--std=PATH] [--tui|-t] [--no-ir]\n       lyx-meow [register|unregister]"
     }
 }
 
@@ -80,13 +84,33 @@ mod tests {
     }
 
     #[test]
-    fn parses_no_tui_flag() {
+    fn one_shot_is_default() {
+        let args = Args::parse(["lyx-meow", "a.syx"].iter().map(|s| s.to_string()));
+        assert!(!args.tui);
+    }
+
+    #[test]
+    fn parses_tui_flag() {
         let args = Args::parse(
-            ["lyx-meow", "check", "a.syx", "--no-tui"]
+            ["lyx-meow", "run", "a.syx", "--tui"]
                 .iter()
                 .map(|s| s.to_string()),
         );
-        assert!(matches!(args.command, Command::Check));
-        assert!(args.no_tui);
+        assert!(matches!(args.command, Command::Run));
+        assert!(args.tui);
+    }
+
+    #[test]
+    fn parses_tui_short_flag() {
+        let args = Args::parse(["lyx-meow", "a.syx", "-t"].iter().map(|s| s.to_string()));
+        assert!(args.tui);
+    }
+
+    #[test]
+    fn parses_register_commands() {
+        let args = Args::parse(["lyx-meow", "--register"].iter().map(|s| s.to_string()));
+        assert!(matches!(args.command, Command::Register));
+        let args = Args::parse(["lyx-meow", "unregister"].iter().map(|s| s.to_string()));
+        assert!(matches!(args.command, Command::Unregister));
     }
 }

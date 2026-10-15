@@ -14,20 +14,26 @@ cargo build
 ## Use
 
 ```bash
-# interactive ratatui TUI (pounces once on open)
+# one-shot pounce (default, no TUI)
 cargo run -- examples/hello.syx
 
-# one-shot for scripts / CI
-cargo run -- run examples/hello.syx --no-tui
+# interactive ratatui TUI
+cargo run -- examples/hello.syx --tui
 
-# one-shot for scripts / CI
-cargo run -- run examples/hello.syx -n
+# interactive ratatui TUI, short flag
+cargo run -- run examples/hello.syx -t
 
 # tokens only (sniffing)
-cargo run -- tokens examples/hello.syx --no-tui
+cargo run -- tokens examples/hello.syx
 
 # custom std path
-cargo run -- run examples/hello.syx --std=../slynx-fork/lib/std --no-tui
+cargo run -- run examples/hello.syx --std=../slynx-fork/lib/std
+
+# register mlyx shortcut on Windows (then use `mlyx` anywhere)
+cargo run -- --register
+
+# unregister the mlyx shortcut
+cargo run -- --unregister
 ```
 
 Keys: `r` pounce (run) · `i` knead IR on/off · `t` sniff tokens · `o` new sunbeam (type a path) · `↑↓/jk` scroll · `q` nap (quit).
@@ -35,6 +41,7 @@ Keys: `r` pounce (run) · `i` knead IR on/off · `t` sniff tokens · `o` new sun
 ## Layout
 
 - `src/cli.rs` — arg parsing, no deps
+- `src/register.rs` — `mlyx` shortcut register/unregister (Windows shim + PATH)
 - `src/runner.rs` — compile wrapper + timing
 - `src/theme.rs` — green styles + tiny pixel accent
 - `src/tui.rs` — ratatui event loop + panes

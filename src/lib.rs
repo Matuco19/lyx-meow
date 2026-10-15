@@ -1,5 +1,6 @@
 pub mod app;
 pub mod cli;
+pub mod register;
 pub mod runner;
 pub mod theme;
 pub mod tui;

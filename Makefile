@@ -10,6 +10,6 @@ check:
 	cargo clippy --all-targets --all-features -- -D warnings
 	cargo build --verbose
 
-#Run the TUI on the hello example without interaction.
+#Run the hello example one-shot (no TUI by default).
 run:
-	cargo run -- run examples/hello.syx --no-tui
+	cargo run -- run examples/hello.syx
