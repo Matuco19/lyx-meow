@@ -14,6 +14,7 @@ pub struct Args {
     pub fuzz_seed: Option<u64>,
     pub fuzz_out: Option<PathBuf>,
     pub fuzz_init: bool,
+    pub fuzz_rust: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,7 @@ impl Args {
             fuzz_seed: None,
             fuzz_out: None,
             fuzz_init: false,
+            fuzz_rust: false,
         };
         for arg in raw {
             match arg.as_str() {
@@ -58,6 +60,7 @@ impl Args {
                 "--tui" | "-t" => out.tui = true,
                 "--no-ir" => out.emit_ir = false,
                 "--init" => out.fuzz_init = true,
+                "--rust" => out.fuzz_rust = true,
                 s if s.starts_with("--std=") => {
                     out.std = Some(PathBuf::from(&s[6..]));
                 }
@@ -87,7 +90,7 @@ impl Args {
     }
 
     pub fn usage() -> &'static str {
-        "usage: lyx-meow [run|check|tokens] <file.syx> [--std=PATH] [--tui|-t] [--no-ir]\n       lyx-meow fuzz [--config=PATH] [--cases=N] [--seed=N] [--out=DIR] [--init]\n       lyx-meow [register|unregister]"
+        "usage: lyx-meow [run|check|tokens] <file.syx> [--std=PATH] [--tui|-t] [--no-ir]\n       lyx-meow fuzz [--config=PATH] [--cases=N] [--seed=N] [--out=DIR] [--init] [--rust]\n       lyx-meow [register|unregister]"
     }
 }
 
@@ -162,5 +165,12 @@ mod tests {
             args.fuzz_out.expect("out should parse").to_string_lossy(),
             "out"
         );
+    }
+
+    #[test]
+    fn parses_rust_flag() {
+        let args = Args::parse(["lyx-meow", "fuzz", "--rust"].iter().map(|s| s.to_string()));
+        assert!(matches!(args.command, Command::Fuzz));
+        assert!(args.fuzz_rust);
     }
 }

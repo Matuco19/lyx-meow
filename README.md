@@ -41,14 +41,19 @@ cargo run -- --unregister
 # fuzz the slynx pipeline (lex → load → hir → ir), bug cards in fuzz-out/cards
 cargo run -- fuzz --init
 cargo run -- fuzz --cases=200
+
+# fuzz slynx's own rust sources as lexer-torture seeds (auto-finds ../slynx-fork)
+cargo run -- fuzz --rust --cases=500
 ```
 
 Fuzzing hunts panics and hangs across the whole slynx pipeline and files a
 detailed card per unique hairball (`fuzz-out/cards/FUZZ-0001.md` + `.syx`
 reproducer, plus `fuzz-out/summary.md`). Everything is tuned through
 `lyx-fuzz.toml` (`run`, `stages`, `gen`, `mutate`, `corpus`, `report`
-sections); CLI flags (`--config`, `--cases`, `--seed`, `--out`) win over
-file values. Same seed replays the same hunt.
+sections); CLI flags (`--config`, `--cases`, `--seed`, `--out`, `--rust`) win
+over file values. Same seed replays the same hunt. Panics whose message holds
+a `run.ignore_panic_contains` entry (default `"not implemented"`) are counted
+as known todos, never filed.
 
 Keys: `r` pounce (run) · `i` knead IR on/off · `t` sniff tokens · `o` new sunbeam (type a path) · `↑↓/jk` scroll · `q` nap (quit).
 

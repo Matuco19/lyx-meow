@@ -91,6 +91,7 @@ pub struct FuzzSummary {
     pub reached_hir: u64,
     pub reached_ir: u64,
     pub harness_skips: u64,
+    pub ignored: u64,
     pub cards: Vec<BugCard>,
     pub out_dir: PathBuf,
 }
@@ -121,6 +122,23 @@ pub fn run(args: &Args) -> color_eyre::Result<()> {
     }
     let mut cfg = FuzzConfig::load(args.fuzz_config.as_deref())?;
     cfg.apply_overrides(args);
+    if args.fuzz_rust {
+        println!(
+            "  {} torching slynx rust sources: {}",
+            theme::green("🐾"),
+            cfg.corpus
+                .seeds
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        if cfg.corpus.seeds.is_empty() {
+            return Err(color_eyre::eyre::eyre!(
+                "no slynx rust sources found, set [corpus] rust_sources in the config"
+            ));
+        }
+    }
     let summary = run_with_config(&cfg)?;
     print_summary(&summary);
     Ok(())
@@ -202,19 +220,24 @@ pub fn run_with_config(cfg: &FuzzConfig) -> color_eyre::Result<FuzzSummary> {
                 }
             }
             CaseOutcome::Panic { stage, message, ms } => {
-                summary.panics += 1;
-                file_card(
-                    &mut summary,
-                    &mut seen,
-                    cfg,
-                    case_no,
-                    &origin,
-                    &src,
-                    &stage,
-                    BugKind::Panic,
-                    &message,
-                    ms,
-                );
+                // known todos (todo!/unimplemented!) are counted, never filed
+                if is_ignored(&cfg.run.ignore_panic_contains, &message) {
+                    summary.ignored += 1;
+                } else {
+                    summary.panics += 1;
+                    file_card(
+                        &mut summary,
+                        &mut seen,
+                        cfg,
+                        case_no,
+                        &origin,
+                        &src,
+                        &stage,
+                        BugKind::Panic,
+                        &message,
+                        ms,
+                    );
+                }
             }
             CaseOutcome::Hang { stage, ms } => {
                 summary.hangs += 1;
@@ -533,6 +556,14 @@ fn dedup_key(stage: &str, kind: BugKind, message: &str) -> String {
     format!("{stage}:{}:{}", kind.as_str(), normalize(&short))
 }
 
+// known-todo check, case-insensitive substring on the panic message
+fn is_ignored(patterns: &[String], message: &str) -> bool {
+    let msg = message.to_lowercase();
+    patterns
+        .iter()
+        .any(|p| !p.is_empty() && msg.contains(&p.to_lowercase()))
+}
+
 // deepest effectively enabled stage, for slow cards
 fn deepest_effective(stages: &crate::fuzz_config::StageConfig) -> &'static str {
     effective_stages(stages).last().copied().unwrap_or("run")
@@ -579,16 +610,34 @@ fn load_corpus(cfg: &FuzzConfig) -> Vec<String> {
     out
 }
 
+// file extension gate, empty filter keeps every utf8 file
+fn wanted_extension(path: &Path, extensions: &[String]) -> bool {
+    if extensions.is_empty() {
+        return true;
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => extensions.iter().any(|w| w.eq_ignore_ascii_case(ext)),
+        None => false,
+    }
+}
+
 // walks one seed path, keeping small sources only
 fn collect_seed(path: &Path, cfg: &FuzzConfig, out: &mut Vec<String>) {
     if out.len() >= cfg.corpus.max_seeds {
         return;
     }
     if path.is_file() {
-        if let Ok(text) = std::fs::read_to_string(path)
-            && text.len() <= cfg.corpus.max_seed_bytes
-        {
-            out.push(text);
+        if !wanted_extension(path, &cfg.corpus.extensions) {
+            return;
+        }
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if text.len() <= cfg.corpus.max_seed_bytes {
+                out.push(text);
+            } else if cfg.corpus.truncate_big_seeds {
+                // cut big seeds to cap instead of skipping them
+                let cut = crate::fuzz_gen::floor_char_boundary(&text, cfg.corpus.max_seed_bytes);
+                out.push(text[..cut].to_string());
+            }
         }
         return;
     }
@@ -681,6 +730,7 @@ fn write_summary_file(summary: &FuzzSummary, cfg: &FuzzConfig) -> color_eyre::Re
     let mut body = format!(
         "# fuzz summary — {} cases, {} hairballs\n\n\
         - clean: {}\n- diagnostics (expected): {}\n- panics: {}\n- hangs: {}\n- slow: {}\n\
+        - ignored (known todos): {}\n\
         - harness skips (generator bugs, skipped loudly): {}\n\
         - stage reach: lex {} · load {} · hir {} · ir {}\n\n## cards\n\n",
         summary.cases,
@@ -690,6 +740,7 @@ fn write_summary_file(summary: &FuzzSummary, cfg: &FuzzConfig) -> color_eyre::Re
         summary.panics,
         summary.hangs,
         summary.slows,
+        summary.ignored,
         summary.harness_skips,
         summary.reached_lex,
         summary.reached_load,
@@ -724,11 +775,12 @@ fn print_summary(summary: &FuzzSummary) {
         summary.slows,
     );
     println!(
-        "  reached: lex {} · load {} · hir {} · ir {} · harness skips {}",
+        "  reached: lex {} · load {} · hir {} · ir {} · ignored {} · harness skips {}",
         summary.reached_lex,
         summary.reached_load,
         summary.reached_hir,
         summary.reached_ir,
+        summary.ignored,
         summary.harness_skips,
     );
     println!("  cards: {}", summary.out_dir.join("cards").display());
@@ -787,5 +839,43 @@ mod tests {
             ir: true,
         };
         assert_eq!(effective_stages(&stages), vec!["load", "hir", "ir"]);
+    }
+
+    #[test]
+    fn ignore_matches_case_insensitively() {
+        let patterns = vec!["not implemented".to_string()];
+        assert!(super::is_ignored(&patterns, "NOT IMPLEMENTED: generics"));
+        assert!(!super::is_ignored(&patterns, "index out of bounds"));
+        assert!(!super::is_ignored(&[], "not implemented"));
+    }
+
+    #[test]
+    fn corpus_filters_extensions_and_truncates() {
+        let dir = std::env::temp_dir().join(format!(
+            "lyx-corpus-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should run")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("tmp dir should exist");
+        std::fs::write(dir.join("keep.rs"), "fn main() {}".repeat(10)).expect("seed should write");
+        std::fs::write(dir.join("skip.md"), "# nope").expect("seed should write");
+
+        let mut cfg = crate::fuzz_config::FuzzConfig::default();
+        cfg.corpus.seeds = vec![dir.clone()];
+        cfg.corpus.extensions = vec!["rs".to_string()];
+        cfg.corpus.max_seed_bytes = 20;
+        cfg.corpus.truncate_big_seeds = true;
+        let corpus = super::load_corpus(&cfg);
+        assert_eq!(corpus.len(), 1);
+        assert!(corpus[0].len() <= 20);
+
+        cfg.corpus.truncate_big_seeds = false;
+        let strict = super::load_corpus(&cfg);
+        assert!(strict.is_empty());
+
+        std::fs::remove_dir_all(&dir).expect("tmp dir should clean");
     }
 }

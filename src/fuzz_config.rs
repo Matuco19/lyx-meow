@@ -29,6 +29,7 @@ pub struct RunConfig {
     pub max_cards: usize,
     pub record_slow: bool,
     pub std_path: String,
+    pub ignore_panic_contains: Vec<String>,
 }
 
 impl Default for RunConfig {
@@ -44,6 +45,7 @@ impl Default for RunConfig {
             max_cards: 200,
             record_slow: false,
             std_path: String::new(),
+            ignore_panic_contains: vec!["not implemented".to_string()],
         }
     }
 }
@@ -134,16 +136,22 @@ impl Default for MutateConfig {
 #[serde(default)]
 pub struct CorpusConfig {
     pub seeds: Vec<PathBuf>,
+    pub rust_sources: Vec<PathBuf>,
+    pub extensions: Vec<String>,
     pub max_seed_bytes: usize,
     pub max_seeds: usize,
+    pub truncate_big_seeds: bool,
 }
 
 impl Default for CorpusConfig {
     fn default() -> Self {
         Self {
             seeds: vec![PathBuf::from("examples")],
+            rust_sources: Vec::new(),
+            extensions: vec!["syx".to_string(), "slx".to_string(), "slynx".to_string()],
             max_seed_bytes: 8000,
             max_seeds: 64,
+            truncate_big_seeds: false,
         }
     }
 }
@@ -191,12 +199,37 @@ impl FuzzConfig {
         if let Some(out) = args.fuzz_out.clone() {
             self.run.out_dir = out;
         }
+        if args.fuzz_rust {
+            self.apply_rust_mode();
+        }
+    }
+
+    ///Switches the corpus to slynx rust sources for lexer-torture hunts.
+    ///Uses `corpus.rust_sources`, else auto-detected slynx dirs near the cwd.
+    pub fn apply_rust_mode(&mut self) {
+        if self.corpus.rust_sources.is_empty() {
+            let found: Vec<PathBuf> = [
+                "../slynx-fork/crates",
+                "../slynx-fork/src",
+                "../slynx-fork/lib",
+                "slynx-fork/crates",
+                "slynx-fork/src",
+            ]
+            .iter()
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+            .collect();
+            self.corpus.rust_sources = found;
+        }
+        self.corpus.seeds = self.corpus.rust_sources.clone();
+        self.corpus.extensions = vec!["rs".to_string()];
+        self.corpus.truncate_big_seeds = true;
     }
 
     ///Commented starter config for `fuzz --init`.
     pub fn default_toml() -> &'static str {
         r#"# lyx-meow fuzz config — every knob the hairball hunt listens to.
-# run with: lyx-meow fuzz [--config=PATH] [--cases=N] [--seed=N] [--out=DIR]
+# run with: lyx-meow fuzz [--config=PATH] [--cases=N] [--seed=N] [--out=DIR] [--rust]
 
 [run]
 cases = 500          # total cases to pounce on
@@ -209,6 +242,8 @@ minimize_rounds = 24 # max shrink attempts per panic card
 max_cards = 200      # stop saving new cards past this (counts continue)
 record_slow = false  # also file a card for slow (non-hang) cases
 std_path = ""        # slynx std dir, empty inherits STD_PATH or ~/.slynx/std
+ignore_panic_contains = ["not implemented"] # panic messages holding any of these
+                     # (case-insensitive) are counted as known todos, never filed
 
 [stages]             # pipeline stages to run in order, first panic wins
 lex = true           # lexer tokenization
@@ -237,10 +272,15 @@ duplicate = true     # repeat a random span
 swap_lines = true    # shuffle two lines
 inject_edge = true   # splice a curated edge snippet inside
 
-[corpus]             # seed programs, files or dirs with .syx/.slx/.slynx
+[corpus]             # seed programs, files or dirs (any utf8 reads)
 seeds = ["examples"]
+rust_sources = []    # slynx rust dirs for --rust hunts, empty autodetects
+                     # ../slynx-fork/{crates,src,lib} near the cwd
+extensions = ["syx", "slx", "slynx"] # file extensions to keep, empty keeps all
 max_seed_bytes = 8000
 max_seeds = 64
+truncate_big_seeds = false # cut oversized seeds to cap instead of skipping
+                           # forced on by --rust (rust files run big)
 
 [report]
 save_inputs = true   # write .syx reproducers next to cards
@@ -268,5 +308,16 @@ mod tests {
         assert_eq!(cfg.run.cases, 7);
         assert_eq!(cfg.run.seed, 1337);
         assert!(cfg.mutate.enabled);
+        assert_eq!(cfg.run.ignore_panic_contains, vec!["not implemented"]);
+    }
+
+    #[test]
+    fn rust_mode_points_at_rs_sources() {
+        let mut cfg = FuzzConfig::default();
+        cfg.corpus.rust_sources = vec![std::path::PathBuf::from("src")];
+        cfg.apply_rust_mode();
+        assert_eq!(cfg.corpus.seeds, vec![std::path::PathBuf::from("src")]);
+        assert_eq!(cfg.corpus.extensions, vec!["rs"]);
+        assert!(cfg.corpus.truncate_big_seeds);
     }
 }

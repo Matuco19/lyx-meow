@@ -17,3 +17,7 @@ run:
 #Hunt hairballs in the slynx pipeline with the default config.
 fuzz:
 	cargo run -- fuzz --cases=200
+
+#Torch the slynx rust sources as lexer-torture seeds.
+fuzz-rust:
+	cargo run -- fuzz --rust --cases=500

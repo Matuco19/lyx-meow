@@ -1,5 +1,5 @@
 # lyx-meow fuzz config — every knob the hairball hunt listens to.
-# run with: lyx-meow fuzz [--config=PATH] [--cases=N] [--seed=N] [--out=DIR]
+# run with: lyx-meow fuzz [--config=PATH] [--cases=N] [--seed=N] [--out=DIR] [--rust]
 
 [run]
 cases = 500          # total cases to pounce on
@@ -12,6 +12,8 @@ minimize_rounds = 24 # max shrink attempts per panic card
 max_cards = 200      # stop saving new cards past this (counts continue)
 record_slow = false  # also file a card for slow (non-hang) cases
 std_path = ""        # slynx std dir, empty inherits STD_PATH or ~/.slynx/std
+ignore_panic_contains = ["not implemented"] # panic messages holding any of these
+                     # (case-insensitive) are counted as known todos, never filed
 
 [stages]             # pipeline stages to run in order, first panic wins
 lex = true           # lexer tokenization
@@ -40,10 +42,15 @@ duplicate = true     # repeat a random span
 swap_lines = true    # shuffle two lines
 inject_edge = true   # splice a curated edge snippet inside
 
-[corpus]             # seed programs, files or dirs with .syx/.slx/.slynx
+[corpus]             # seed programs, files or dirs (any utf8 reads)
 seeds = ["examples"]
+rust_sources = []    # slynx rust dirs for --rust hunts, empty autodetects
+                     # ../slynx-fork/{crates,src,lib} near the cwd
+extensions = ["syx", "slx", "slynx"] # file extensions to keep, empty keeps all
 max_seed_bytes = 8000
 max_seeds = 64
+truncate_big_seeds = false # cut oversized seeds to cap instead of skipping
+                           # forced on by --rust (rust files run big)
 
 [report]
 save_inputs = true   # write .syx reproducers next to cards

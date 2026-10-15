@@ -103,7 +103,7 @@ fn print_help() {
     println!("{} — pounce on slynx files", theme::logo());
     println!("{}", Args::usage());
     println!("one-shot by default · --tui/-t opens the ratatui playground");
-    println!("fuzz: lyx-meow fuzz --init (starter config) · lyx-meow fuzz [--cases=N]");
+    println!("fuzz: lyx-meow fuzz --init (starter config) · lyx-meow fuzz [--cases=N] [--rust]");
     println!("keys: r pounce · i knead IR · t sniff tokens · o new sunbeam · q nap");
     println!("register: lyx-meow --register (mlyx shortcut) · lyx-meow --unregister");
 }
