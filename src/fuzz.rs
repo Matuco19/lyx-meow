@@ -63,11 +63,18 @@ enum CaseOutcome {
         ms: u128,
     },
     Hang {
+        stage: String,
         ms: u128,
     },
     Slow {
         ms: u128,
     },
+}
+
+///Worker heartbeat, lets the driver name the hung stage.
+enum Msg {
+    Progress(&'static str),
+    Done(CaseOutcome),
 }
 
 ///Totals for the summary card.
@@ -79,6 +86,11 @@ pub struct FuzzSummary {
     pub panics: u64,
     pub hangs: u64,
     pub slows: u64,
+    pub reached_lex: u64,
+    pub reached_load: u64,
+    pub reached_hir: u64,
+    pub reached_ir: u64,
+    pub harness_skips: u64,
     pub cards: Vec<BugCard>,
     pub out_dir: PathBuf,
 }
@@ -140,8 +152,36 @@ pub fn run_with_config(cfg: &FuzzConfig) -> color_eyre::Result<FuzzSummary> {
         cfg.run.seed
     );
     for case_no in 0..cfg.run.cases {
-        let (origin, src) = case_source(&mut rng, cfg, &corpus, case_no);
-        match run_case(&src, cfg) {
+        summary.cases += 1;
+        // the hunt must survive its own generator: a harness panic skips loudly
+        let generated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            case_source(&mut rng, cfg, &corpus, case_no)
+        }));
+        let (origin, src) = match generated {
+            Ok(pair) => pair,
+            Err(payload) => {
+                summary.harness_skips += 1;
+                if summary.harness_skips <= 3 {
+                    println!(
+                        "  {} harness hairball on case #{case_no}: {}",
+                        theme::green("!"),
+                        panic_message(payload).lines().next().unwrap_or("unknown")
+                    );
+                }
+                continue;
+            }
+        };
+        let (outcome, reached) = run_case(&src, cfg);
+        for stage in &reached {
+            match *stage {
+                STAGE_LEX => summary.reached_lex += 1,
+                STAGE_LOAD => summary.reached_load += 1,
+                STAGE_HIR => summary.reached_hir += 1,
+                STAGE_IR => summary.reached_ir += 1,
+                _ => {}
+            }
+        }
+        match outcome {
             CaseOutcome::Clean => summary.clean += 1,
             CaseOutcome::Diagnostic => summary.diagnostics += 1,
             CaseOutcome::Slow { ms } => {
@@ -154,7 +194,7 @@ pub fn run_with_config(cfg: &FuzzConfig) -> color_eyre::Result<FuzzSummary> {
                         case_no,
                         &origin,
                         &src,
-                        STAGE_IR,
+                        deepest_effective(&cfg.stages),
                         BugKind::Slow,
                         &format!("case slower than slow_ms ({ms}ms)"),
                         ms,
@@ -176,8 +216,9 @@ pub fn run_with_config(cfg: &FuzzConfig) -> color_eyre::Result<FuzzSummary> {
                     ms,
                 );
             }
-            CaseOutcome::Hang { ms } => {
+            CaseOutcome::Hang { stage, ms } => {
                 summary.hangs += 1;
+                let last = reached.last().copied().unwrap_or("nothing");
                 file_card(
                     &mut summary,
                     &mut seen,
@@ -185,14 +226,13 @@ pub fn run_with_config(cfg: &FuzzConfig) -> color_eyre::Result<FuzzSummary> {
                     case_no,
                     &origin,
                     &src,
-                    STAGE_IR,
+                    &stage,
                     BugKind::Hang,
-                    &format!("no answer within {ms}ms, worker left wandering"),
+                    &format!("no answer within {ms}ms, last completed: {last}"),
                     ms,
                 );
             }
         }
-        summary.cases += 1;
         if cfg.report.print_ok_every > 0 && (case_no + 1) % cfg.report.print_ok_every == 0 {
             println!(
                 "  🐾 pounced {}/{} · hairballs {}",
@@ -254,8 +294,8 @@ fn file_card(
     summary.cards.push(card);
 }
 
-// runs one case in a worker with timeout, first failing stage wins
-fn run_case(src: &str, cfg: &FuzzConfig) -> CaseOutcome {
+// runs one case in a worker with timeout, returns completed stages too
+fn run_case(src: &str, cfg: &FuzzConfig) -> (CaseOutcome, Vec<&'static str>) {
     let (tx, rx) = std::sync::mpsc::channel();
     let input = src.to_string();
     let stages = cfg.stages.clone();
@@ -263,85 +303,172 @@ fn run_case(src: &str, cfg: &FuzzConfig) -> CaseOutcome {
     let slow = cfg.run.slow_ms;
     let root = cfg.run.out_dir.join("case.syx");
     std::thread::spawn(move || {
-        let _ = tx.send(run_stages(&input, &stages, &root, slow));
+        let beat = |stage: &'static str| {
+            let _ = tx.send(Msg::Progress(stage));
+        };
+        let outcome = run_stages(&input, &stages, &root, slow, &beat);
+        let _ = tx.send(Msg::Done(outcome));
     });
-    match rx.recv_timeout(budget) {
-        Ok(outcome) => outcome,
-        Err(_) => CaseOutcome::Hang {
-            ms: cfg.run.timeout_ms as u128,
-        },
+    let mut reached: Vec<&'static str> = Vec::new();
+    let deadline = Instant::now() + budget;
+    loop {
+        // absolute deadline, heartbeats never extend it
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(Msg::Progress(stage)) => {
+                if !reached.contains(&stage) {
+                    reached.push(stage);
+                }
+            }
+            Ok(Msg::Done(outcome)) => return (outcome, reached),
+            Err(_) => {
+                let hung = hung_stage(&cfg.stages, &reached);
+                return (
+                    CaseOutcome::Hang {
+                        stage: hung.to_string(),
+                        ms: cfg.run.timeout_ms as u128,
+                    },
+                    reached,
+                );
+            }
+        }
     }
 }
 
-// staged pipeline: lex, load, hir, ir — panics caught per stage for attribution
+// first enabled stage with no heartbeat, the one the worker died in
+fn hung_stage(stages: &crate::fuzz_config::StageConfig, reached: &[&'static str]) -> &'static str {
+    for stage in effective_stages(stages) {
+        if !reached.contains(&stage) {
+            return stage;
+        }
+    }
+    effective_stages(stages).last().copied().unwrap_or("run")
+}
+
+// enabled stages in pipeline order, hir/ir imply their prerequisites
+fn effective_stages(stages: &crate::fuzz_config::StageConfig) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if stages.lex {
+        out.push(STAGE_LEX);
+    }
+    if stages.load || stages.hir || stages.ir {
+        out.push(STAGE_LOAD);
+    }
+    if stages.hir || stages.ir {
+        out.push(STAGE_HIR);
+    }
+    if stages.ir {
+        out.push(STAGE_IR);
+    }
+    out
+}
+
+// staged pipeline with per-stage panic catch, attribution is exact
 fn run_stages(
     src: &str,
     stages: &crate::fuzz_config::StageConfig,
     root: &Path,
     slow: u64,
+    beat: &dyn Fn(&'static str),
 ) -> CaseOutcome {
     let start = Instant::now();
     let ms = || start.elapsed().as_millis();
 
     if stages.lex {
-        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = slynx::slynx_lexer::Lexer::tokenize(src);
-        }));
-        if let Err(payload) = caught {
-            return CaseOutcome::Panic {
-                stage: STAGE_LEX.to_string(),
-                message: panic_message(payload),
-                ms: ms(),
-            };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            slynx::slynx_lexer::Lexer::tokenize(src).map_err(|e| format!("{e:?}"))
+        })) {
+            Err(payload) => {
+                return CaseOutcome::Panic {
+                    stage: STAGE_LEX.to_string(),
+                    message: panic_message(payload),
+                    ms: ms(),
+                };
+            }
+            Ok(Err(_)) => return CaseOutcome::Diagnostic,
+            Ok(Ok(_)) => beat(STAGE_LEX),
         }
     }
 
     // remaining stages share one context, in-memory source
     let ctx = slynx::SlynxContext::from_source(src.to_string(), root);
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if stages.load {
-            let modules = ctx.load_modules().map_err(|e| format!("{e:?}"))?;
-            if stages.hir {
-                let (hir, deadcode, ownership) =
-                    ctx.build_hir(&modules).map_err(|e| format!("{e:?}"))?;
-                if stages.ir {
-                    ctx.build_ir(hir, deadcode, ownership)
-                        .map_err(|e| format!("{e:?}"))?;
-                }
+    let effective = effective_stages(stages);
+
+    let modules = if effective.contains(&STAGE_LOAD) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ctx.load_modules().map_err(|e| format!("{e:?}"))
+        })) {
+            Err(payload) => {
+                return CaseOutcome::Panic {
+                    stage: STAGE_LOAD.to_string(),
+                    message: panic_message(payload),
+                    ms: ms(),
+                };
             }
-            Ok::<(), String>(())
-        } else {
-            Ok(())
-        }
-    }));
-    match outcome {
-        Err(payload) => {
-            // attribute to deepest enabled stage: load < hir < ir
-            let stage = if stages.ir && stages.hir {
-                STAGE_IR
-            } else if stages.hir {
-                STAGE_HIR
-            } else {
-                STAGE_LOAD
-            };
-            CaseOutcome::Panic {
-                stage: stage.to_string(),
-                message: panic_message(payload),
-                ms: ms(),
+            Ok(Err(_)) => return CaseOutcome::Diagnostic,
+            Ok(Ok(modules)) => {
+                beat(STAGE_LOAD);
+                Some(modules)
             }
         }
-        Ok(Err(_)) => CaseOutcome::Diagnostic,
-        Ok(Ok(())) if !stages.lex && !stages.load && !stages.hir && !stages.ir => {
-            CaseOutcome::Clean
-        }
-        Ok(Ok(())) => {
-            let elapsed = ms();
-            if slow > 0 && elapsed > slow as u128 {
-                CaseOutcome::Slow { ms: elapsed }
-            } else {
-                CaseOutcome::Clean
+    } else {
+        None
+    };
+
+    // hir implies load, so modules is always present here
+    let lowered = if effective.contains(&STAGE_HIR) {
+        let Some(modules) = modules.as_ref() else {
+            return CaseOutcome::Diagnostic;
+        };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ctx.build_hir(modules).map_err(|e| format!("{e:?}"))
+        })) {
+            Err(payload) => {
+                return CaseOutcome::Panic {
+                    stage: STAGE_HIR.to_string(),
+                    message: panic_message(payload),
+                    ms: ms(),
+                };
+            }
+            Ok(Err(_)) => return CaseOutcome::Diagnostic,
+            Ok(Ok(lowered)) => {
+                beat(STAGE_HIR);
+                Some(lowered)
             }
         }
+    } else {
+        None
+    };
+
+    if effective.contains(&STAGE_IR) {
+        // ir implies hir, so lowered artifacts are always present here
+        let Some((hir, deadcode, ownership)) = lowered else {
+            return CaseOutcome::Diagnostic;
+        };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ctx.build_ir(hir, deadcode, ownership)
+                .map_err(|e| format!("{e:?}"))
+        })) {
+            Err(payload) => {
+                return CaseOutcome::Panic {
+                    stage: STAGE_IR.to_string(),
+                    message: panic_message(payload),
+                    ms: ms(),
+                };
+            }
+            Ok(Err(_)) => return CaseOutcome::Diagnostic,
+            Ok(Ok(_)) => beat(STAGE_IR),
+        }
+    }
+
+    if effective.is_empty() {
+        return CaseOutcome::Clean;
+    }
+    let elapsed = ms();
+    if slow > 0 && elapsed > slow as u128 {
+        CaseOutcome::Slow { ms: elapsed }
+    } else {
+        CaseOutcome::Clean
     }
 }
 
@@ -390,20 +517,43 @@ fn minimize(src: &str, cfg: &FuzzConfig, key: &str) -> Option<String> {
 
 // checks a shrink candidate still triggers the same hairball
 fn reproduces(candidate: &str, cfg: &FuzzConfig, key: &str) -> bool {
-    match run_case(candidate, cfg) {
+    match run_case(candidate, cfg).0 {
         CaseOutcome::Panic { stage, message, .. } => {
             dedup_key(&stage, BugKind::Panic, &message) == key
         }
-        CaseOutcome::Hang { .. } => dedup_key(STAGE_IR, BugKind::Hang, "hang") == key,
+        // minimize only files panics, hangs never shrink
         _ => false,
     }
 }
 
-// stage + kind + first line, the identity of a hairball
+// stage + kind + normalized first line, the identity of a hairball
 fn dedup_key(stage: &str, kind: BugKind, message: &str) -> String {
     let first = message.lines().next().unwrap_or("").trim();
     let short: String = first.chars().take(160).collect();
-    format!("{stage}:{}:{short}", kind.as_str())
+    format!("{stage}:{}:{}", kind.as_str(), normalize(&short))
+}
+
+// deepest effectively enabled stage, for slow cards
+fn deepest_effective(stages: &crate::fuzz_config::StageConfig) -> &'static str {
+    effective_stages(stages).last().copied().unwrap_or("run")
+}
+
+// collapses digit runs so `index 42` and `index 43` file as one hairball
+fn normalize(signal: &str) -> String {
+    let mut out = String::with_capacity(signal.len());
+    let mut in_digits = false;
+    for c in signal.chars() {
+        if c.is_ascii_digit() {
+            if !in_digits {
+                out.push('#');
+                in_digits = true;
+            }
+        } else {
+            out.push(c);
+            in_digits = false;
+        }
+    }
+    out
 }
 
 // panic payload to string without ever panicking again
@@ -530,7 +680,9 @@ fn save_card(card: &BugCard, cfg: &FuzzConfig) {
 fn write_summary_file(summary: &FuzzSummary, cfg: &FuzzConfig) -> color_eyre::Result<()> {
     let mut body = format!(
         "# fuzz summary — {} cases, {} hairballs\n\n\
-        - clean: {}\n- diagnostics (expected): {}\n- panics: {}\n- hangs: {}\n- slow: {}\n\n## cards\n\n",
+        - clean: {}\n- diagnostics (expected): {}\n- panics: {}\n- hangs: {}\n- slow: {}\n\
+        - harness skips (generator bugs, skipped loudly): {}\n\
+        - stage reach: lex {} · load {} · hir {} · ir {}\n\n## cards\n\n",
         summary.cases,
         summary.cards.len(),
         summary.clean,
@@ -538,6 +690,11 @@ fn write_summary_file(summary: &FuzzSummary, cfg: &FuzzConfig) -> color_eyre::Re
         summary.panics,
         summary.hangs,
         summary.slows,
+        summary.harness_skips,
+        summary.reached_lex,
+        summary.reached_load,
+        summary.reached_hir,
+        summary.reached_ir,
     );
     for card in &summary.cards {
         body.push_str(&format!(
@@ -566,6 +723,14 @@ fn print_summary(summary: &FuzzSummary) {
         summary.hangs,
         summary.slows,
     );
+    println!(
+        "  reached: lex {} · load {} · hir {} · ir {} · harness skips {}",
+        summary.reached_lex,
+        summary.reached_load,
+        summary.reached_hir,
+        summary.reached_ir,
+        summary.harness_skips,
+    );
     println!("  cards: {}", summary.out_dir.join("cards").display());
     if summary.cards.is_empty() {
         println!("  no hairballs coughed up. the sunbeam is clean… for now 😺");
@@ -574,7 +739,8 @@ fn print_summary(summary: &FuzzSummary) {
 
 #[cfg(test)]
 mod tests {
-    use super::{BugKind, dedup_key, panic_message};
+    use super::{BugKind, dedup_key, effective_stages, hung_stage, panic_message};
+    use crate::fuzz_config::StageConfig;
 
     #[test]
     fn dedup_keys_match_same_signal() {
@@ -595,5 +761,31 @@ mod tests {
     fn panic_message_reads_strings() {
         let msg = panic_message(Box::new("meow".to_string()));
         assert_eq!(msg, "meow");
+    }
+
+    #[test]
+    fn dedup_folds_digit_runs() {
+        let a = dedup_key("hir", BugKind::Panic, "index 42 out of bounds");
+        let b = dedup_key("hir", BugKind::Panic, "index 43 out of bounds");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn hang_names_first_unreached_stage() {
+        let stages = StageConfig::default();
+        assert_eq!(hung_stage(&stages, &[]), "lex");
+        assert_eq!(hung_stage(&stages, &["lex", "load"]), "hir");
+        assert_eq!(hung_stage(&stages, &["lex", "load", "hir", "ir"]), "ir");
+    }
+
+    #[test]
+    fn ir_implies_its_prerequisites() {
+        let stages = StageConfig {
+            lex: false,
+            load: false,
+            hir: false,
+            ir: true,
+        };
+        assert_eq!(effective_stages(&stages), vec!["load", "hir", "ir"]);
     }
 }

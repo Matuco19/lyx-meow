@@ -74,7 +74,9 @@ pub fn preview_source(path: &Path, limit: usize) -> String {
             if s.len() <= limit {
                 s
             } else {
-                format!("{}\n… tail truncated, showing the tip", &s[..limit])
+                // byte cut would panic mid-char on unicode sources
+                let cut = crate::fuzz_gen::floor_char_boundary(&s, limit);
+                format!("{}\n… tail truncated, showing the tip", &s[..cut])
             }
         }
         Err(e) => format!("<hiss! unreadable sunbeam: {e}>"),

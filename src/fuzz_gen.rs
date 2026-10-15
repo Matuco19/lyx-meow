@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use crate::fuzz_config::{FuzzConfig, GenConfig, MutateConfig};
 
+///Floors a byte index to the nearest char boundary at or below it.
+///Every random splice point must go through here, never index raw.
+pub(crate) fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    let mut at = idx.min(s.len());
+    while at > 0 && !s.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
 ///Tiny xorshift64 stream, deterministic per seed, no extra deps.
 pub struct Rng {
     state: u64,
@@ -268,12 +278,15 @@ pub fn mutate(rng: &mut Rng, src: &str, mc: &MutateConfig) -> String {
             3 => op_swap_lines(rng, &mut out),
             _ => {
                 let edge: &str = rng.pick(&EDGE_POOL);
-                let at = rng.below(out.len() + 1);
-                out.insert_str(at.min(out.len()), edge);
+                // raw byte index would split multi-byte chars, floor it
+                let at = floor_char_boundary(&out, rng.below(out.len() + 1));
+                out.insert_str(at, edge);
             }
         }
         if out.len() > 64_000 {
-            out.truncate(64_000);
+            // truncate panics past a mid-char cut, floor it
+            let cut = floor_char_boundary(&out, 64_000);
+            out.truncate(cut);
         }
     }
     out
@@ -302,11 +315,7 @@ fn op_truncate(rng: &mut Rng, out: &mut String) {
     if out.is_empty() {
         return;
     }
-    let mut len = rng.below(out.len() + 1);
-    while len > 0 && !out.is_char_boundary(len) {
-        len -= 1;
-    }
-    out.truncate(len);
+    out.truncate(floor_char_boundary(out.as_str(), rng.below(out.len() + 1)));
 }
 
 // repeats a random span to stress nesting and arity checks
@@ -314,14 +323,11 @@ fn op_duplicate(rng: &mut Rng, out: &mut String) {
     if out.is_empty() {
         return;
     }
-    let mut start = rng.below(out.len());
-    while !out.is_char_boundary(start) {
-        start = start.saturating_sub(1);
-    }
-    let mut end = (start + rng.below(out.len().saturating_sub(start) + 1)).min(out.len());
-    while !out.is_char_boundary(end) {
-        end = end.saturating_sub(1).max(start);
-    }
+    let start = floor_char_boundary(out.as_str(), rng.below(out.len()));
+    let end = floor_char_boundary(
+        out.as_str(),
+        start + rng.below(out.len().saturating_sub(start) + 1),
+    );
     if end > start {
         let span = out[start..end].to_string();
         out.insert_str(end.min(out.len()), &span);
@@ -373,6 +379,30 @@ mod tests {
         let mc = FuzzConfig::default().mutate;
         let out = mutate(&mut Rng::new(3), "func main(): void {}", &mc);
         assert!(out.len() <= 64_000);
+    }
+
+    #[test]
+    fn mutate_never_splits_chars() {
+        // unicode-heavy soak: returning at all proves no splice panicked,
+        // String guarantees valid utf8 by construction
+        let mc = FuzzConfig::default().mutate;
+        let seed = "func β(): void { let çã = \"õ\\n\"; }\n".repeat(50);
+        for s in 0..300 {
+            let out = mutate(&mut Rng::new(s), &seed, &mc);
+            assert!(out.len() <= 64_000, "cap must hold on seed {s}");
+            assert!(!out.is_empty(), "soak seed is big, output stays big {s}");
+        }
+    }
+
+    #[test]
+    fn floor_helper_pins_to_boundaries() {
+        let s = "aβç";
+        assert_eq!(super::floor_char_boundary(s, 99), s.len());
+        for i in 0..=s.len() {
+            let at = super::floor_char_boundary(s, i);
+            assert!(s.is_char_boundary(at));
+            assert!(at <= i);
+        }
     }
 
     #[test]
