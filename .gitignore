@@ -1,1 +1,3 @@
 **/target/
+/fuzz-out/
+lyx-fuzz.toml
