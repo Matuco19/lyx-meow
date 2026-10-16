@@ -6,6 +6,8 @@
 
 # lyx-meow
 
+> **Because cows go moo, and lynxes go meow.**
+
 Personal TUI runner for [slynx](https://github.com/Slynx-Language/slynx). Pounce on `.syx` files, knead the IR, nap when done. `(=^･ω･^=)`
 
 ## Install
